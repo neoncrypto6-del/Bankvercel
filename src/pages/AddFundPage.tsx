@@ -211,7 +211,9 @@ export function AddFundPage({ onNavigate, userProfile }: AddFundPageProps) {
                   <p className="text-xs text-gray-500 uppercase tracking-wider mb-1">
                     Bank Name
                   </p>
-                  <p className="text-white font-medium">Bank Vercel</p>
+                  <p className="text-white font-medium">
+                  {userProfile?.bank_name || 'Bank Vercel'}
+                  </p>
                 </div>
                 {[
               {
