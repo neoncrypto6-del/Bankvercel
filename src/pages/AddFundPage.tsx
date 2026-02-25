@@ -404,7 +404,7 @@ export function AddFundPage({ onNavigate, userProfile }: AddFundPageProps) {
             <div className="space-y-6 text-center max-w-md mx-auto">
               <h2 className="text-xl font-bold text-white">Deposit via Cash App</h2>
               <p className="text-gray-400 text-sm">
-                Send funds using Cash App to the cashtag below. Funds will be credited after confirmation.
+                Receive funds using Cash App to the cashtag below. Funds will be credited after confirmation.
               </p>
 
               <div className="bg-white/5 p-6 rounded-xl border border-white/10 space-y-4">
@@ -445,7 +445,7 @@ export function AddFundPage({ onNavigate, userProfile }: AddFundPageProps) {
                 </Button>
 
                 <div className="text-xs text-gray-500">
-                  Ensure you send from your registered name for faster processing.
+                  Bank Vercel Cashapp fast processing.
                 </div>
               </div>
             </div>
