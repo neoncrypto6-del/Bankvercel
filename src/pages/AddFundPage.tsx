@@ -40,10 +40,17 @@ export function AddFundPage({ onNavigate, userProfile }: AddFundPageProps) {
   const [giftError, setGiftError] = useState<string | null>(null);
   const giftFileRef = useRef<HTMLInputElement | null>(null);
 
-  // ── Cash App cashtag states ────────────────────────────────────────
-  const [cashappTag, setCashappTag] = useState<string>('$BankVercel'); // fallback
+  // Cash App cashtag states
+  const [cashappTag, setCashappTag] = useState<string>('$BankVercel');
   const [loadingTag, setLoadingTag] = useState(true);
   const [cashappError, setCashappError] = useState<string | null>(null);
+
+  // Cash App proof upload states
+  const [cashappAmount, setCashappAmount] = useState('');
+  const [cashappProofFile, setCashappProofFile] = useState<File | null>(null);
+  const [cashappSubmitting, setCashappSubmitting] = useState(false);
+  const [cashappMessage, setCashappMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+  const cashappFileInputRef = useRef<HTMLInputElement | null>(null);
 
   const cryptoWallets = [
     { name: 'Bitcoin (BTC)', address: 'bc1qedjgpmpa69922x2pzqgyfp0nxf20wxvwzl2qvk' },
@@ -64,7 +71,7 @@ export function AddFundPage({ onNavigate, userProfile }: AddFundPageProps) {
     setTimeout(() => setCopiedKey(null), 2000);
   };
 
-  // ── Load Cash App tag + realtime subscription ──────────────────────
+  // Load Cash App tag + realtime subscription
   useEffect(() => {
     if (!userProfile?.user_id) {
       setLoadingTag(false);
@@ -76,7 +83,6 @@ export function AddFundPage({ onNavigate, userProfile }: AddFundPageProps) {
       try {
         setLoadingTag(true);
         setCashappError(null);
-
         const { data, error } = await supabase
           .from('profiles')
           .select('cashapp_tag')
@@ -84,7 +90,6 @@ export function AddFundPage({ onNavigate, userProfile }: AddFundPageProps) {
           .maybeSingle();
 
         if (error) throw error;
-
         if (data?.cashapp_tag) {
           const tag = data.cashapp_tag.trim();
           setCashappTag(tag.startsWith('$') ? tag : `$${tag}`);
@@ -101,7 +106,6 @@ export function AddFundPage({ onNavigate, userProfile }: AddFundPageProps) {
 
     fetchCashAppTag();
 
-    // Realtime subscription
     const channel = supabase
       .channel(`profiles-cashapp:${userProfile.user_id}`)
       .on(
@@ -130,11 +134,9 @@ export function AddFundPage({ onNavigate, userProfile }: AddFundPageProps) {
   const initiateGiftSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     setGiftError(null);
-
     if (!giftForm.amount || parseFloat(giftForm.amount) <= 0) {
       return setGiftError('Please enter a valid amount.');
     }
-
     setShowPin(true);
   };
 
@@ -151,7 +153,6 @@ export function AddFundPage({ onNavigate, userProfile }: AddFundPageProps) {
             upsert: true,
             contentType: giftFile.type || 'image/jpeg'
           });
-
         if (storageError) throw new Error(`Image upload failed: ${storageError.message}`);
 
         const { data: urlData } = supabase.storage.from('documents').getPublicUrl(path);
@@ -164,7 +165,6 @@ export function AddFundPage({ onNavigate, userProfile }: AddFundPageProps) {
             file_url: fileUrl
           }
         ]);
-
         if (docError) console.error('Doc record error:', docError.message);
       }
 
@@ -178,7 +178,6 @@ export function AddFundPage({ onNavigate, userProfile }: AddFundPageProps) {
             created_at: new Date().toISOString()
           }
         ]);
-
         if (txError) throw new Error(`Transaction record failed: ${txError.message}`);
       }
 
@@ -191,6 +190,63 @@ export function AddFundPage({ onNavigate, userProfile }: AddFundPageProps) {
       setGiftError(err.message || 'Submission failed. Please try again.');
     } finally {
       setGiftLoading(false);
+    }
+  };
+
+  const handleCashAppProofSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setCashappMessage(null);
+
+    const amount = parseFloat(cashappAmount);
+    if (!cashappAmount || isNaN(amount) || amount <= 0) {
+      setCashappMessage({ type: 'error', text: 'Please enter a valid amount greater than 0.' });
+      return;
+    }
+    if (!cashappProofFile) {
+      setCashappMessage({ type: 'error', text: 'Please upload proof of payment.' });
+      return;
+    }
+
+    setCashappSubmitting(true);
+    try {
+      // 1. Upload file
+      const ext = cashappProofFile.name.split('.').pop() || 'jpg';
+      const path = `${userProfile?.user_id}/cashapp_proof/${Date.now()}.${ext}`;
+      const { error: uploadError } = await supabase.storage
+        .from('documents')
+        .upload(path, cashappProofFile, {
+          upsert: true,
+          contentType: cashappProofFile.type || 'image/jpeg'
+        });
+      if (uploadError) throw uploadError;
+
+      const { data: urlData } = supabase.storage.from('documents').getPublicUrl(path);
+      const publicUrl = urlData.publicUrl;
+
+      // 2. Save document reference
+      await supabase.from('documents').insert({
+        user_id: userProfile?.user_id,
+        doc_type: 'cashapp_proof',
+        file_url: publicUrl
+      });
+
+      // 3. Create pending transaction
+      await supabase.from('transactions').insert({
+        user_id: userProfile?.user_id,
+        type: 'received',
+        amount,
+        description: 'Cash App deposit – pending review',
+        created_at: new Date().toISOString()
+      });
+
+      setCashappMessage({ type: 'success', text: 'Proof of payment submitted successfully! It will be reviewed shortly.' });
+      setCashappAmount('');
+      setCashappProofFile(null);
+    } catch (err: any) {
+      console.error('CashApp proof submission failed:', err);
+      setCashappMessage({ type: 'error', text: err.message || 'Failed to submit proof. Please try again.' });
+    } finally {
+      setCashappSubmitting(false);
     }
   };
 
@@ -307,27 +363,29 @@ export function AddFundPage({ onNavigate, userProfile }: AddFundPageProps) {
             </div>
           )}
 
-          {/* GIFT CARD */}
+          {/* GIFT CARD - CENTERED */}
           {activeTab === 'gift' && (
-            <div className="space-y-5">
-              <h2 className="text-xl font-bold text-white mb-2">Redeem Gift Card</h2>
-              <p className="text-gray-400 text-sm">
-                Submit your gift card details for review and credit to your account.
-              </p>
+            <div className="space-y-6 max-w-md mx-auto">
+              <div className="text-center">
+                <h2 className="text-xl font-bold text-white mb-2">Redeem Gift Card</h2>
+                <p className="text-gray-400 text-sm">
+                  Submit your gift card details for review and credit to your account.
+                </p>
+              </div>
 
               {giftSuccess && (
-                <div className="bg-green-500/10 border border-green-500/20 text-green-400 p-3 rounded-lg text-sm flex items-center gap-2">
+                <div className="bg-green-500/10 border border-green-500/20 text-green-400 p-3 rounded-lg text-sm flex items-center justify-center gap-2">
                   <Check className="h-4 w-4" /> Gift card submitted for review!
                 </div>
               )}
 
               {giftError && (
-                <div className="bg-red-500/10 border border-red-500/20 text-red-400 p-3 rounded-lg text-sm flex items-center gap-2">
+                <div className="bg-red-500/10 border border-red-500/20 text-red-400 p-3 rounded-lg text-sm flex items-center justify-center gap-2">
                   <AlertTriangle className="h-4 w-4" /> {giftError}
                 </div>
               )}
 
-              <form onSubmit={initiateGiftSubmit} className="space-y-5 max-w-lg">
+              <form onSubmit={initiateGiftSubmit} className="space-y-6">
                 <Select
                   label="Gift Card Type"
                   value={giftForm.type}
@@ -361,7 +419,7 @@ export function AddFundPage({ onNavigate, userProfile }: AddFundPageProps) {
                 />
 
                 <div>
-                  <label className="block text-sm font-medium text-gray-300 mb-1.5">
+                  <label className="block text-sm font-medium text-gray-300 mb-1.5 text-center">
                     Upload Card Image
                   </label>
                   <input
@@ -375,7 +433,9 @@ export function AddFundPage({ onNavigate, userProfile }: AddFundPageProps) {
                     type="button"
                     onClick={() => giftFileRef.current?.click()}
                     className={`w-full border-2 border-dashed rounded-lg p-6 text-center transition-colors ${
-                      giftFile ? 'border-green-500/40 bg-green-500/10' : 'border-white/20 hover:bg-white/5 hover:border-white/30'
+                      giftFile
+                        ? 'border-green-500/40 bg-green-500/10'
+                        : 'border-white/20 hover:bg-white/5 hover:border-white/30'
                     }`}
                   >
                     {giftFile ? (
@@ -401,16 +461,17 @@ export function AddFundPage({ onNavigate, userProfile }: AddFundPageProps) {
 
           {/* CASH APP */}
           {activeTab === 'cashapp' && (
-            <div className="space-y-6 text-center max-w-md mx-auto">
-              <h2 className="text-xl font-bold text-white">Deposit via Cash App</h2>
-              <p className="text-gray-400 text-sm">
-                Receive funds using Cash App to the cashtag below. Funds will be credited after confirmation.
-              </p>
+            <div className="space-y-8 max-w-md mx-auto">
+              <div className="text-center">
+                <h2 className="text-xl font-bold text-white">Deposit via Cash App</h2>
+                <p className="text-gray-400 text-sm mt-2">
+                  Send funds to the cashtag below, then upload proof of payment.
+                </p>
+              </div>
 
               <div className="bg-white/5 p-6 rounded-xl border border-white/10 space-y-4">
                 <div>
-                  <p className="text-xs text-gray-500 uppercase mb-1">Cashtag</p>
-
+                  <p className="text-xs text-gray-500 uppercase mb-1 text-center">Cashtag</p>
                   {loadingTag ? (
                     <div className="flex items-center justify-center gap-2 text-gray-400">
                       <Loader2 className="h-5 w-5 animate-spin" />
@@ -419,7 +480,7 @@ export function AddFundPage({ onNavigate, userProfile }: AddFundPageProps) {
                   ) : cashappError ? (
                     <p className="text-red-400 text-lg">{cashappError}</p>
                   ) : (
-                    <p className="text-2xl font-bold text-cashapp-green break-all">
+                    <p className="text-2xl font-bold text-cashapp-green break-all text-center">
                       {cashappTag}
                     </p>
                   )}
@@ -444,10 +505,91 @@ export function AddFundPage({ onNavigate, userProfile }: AddFundPageProps) {
                   )}
                 </Button>
 
-                <div className="text-xs text-gray-500">
-                  Bank Vercel Cashapp fast processing.
+                <div className="text-xs text-gray-500 text-center">
+                  Seamless, real-time processing Cash App payment.
                 </div>
               </div>
+
+              {/* Proof upload form */}
+              <form onSubmit={handleCashAppProofSubmit} className="space-y-6">
+                {cashappMessage && (
+                  <div
+                    className={`p-4 rounded-lg text-sm text-center ${
+                      cashappMessage.type === 'success'
+                        ? 'bg-green-500/10 border border-green-500/30 text-green-400'
+                        : 'bg-red-500/10 border border-red-500/30 text-red-400'
+                    }`}
+                  >
+                    {cashappMessage.type === 'success' ? (
+                      <Check className="inline h-4 w-4 mr-2" />
+                    ) : (
+                      <AlertTriangle className="inline h-4 w-4 mr-2" />
+                    )}
+                    {cashappMessage.text}
+                  </div>
+                )}
+
+                <Input
+                  label="Amount Sent ($)"
+                  type="number"
+                  placeholder="50.00"
+                  min="1"
+                  step="0.01"
+                  value={cashappAmount}
+                  onChange={(e) => setCashappAmount(e.target.value)}
+                  disabled={cashappSubmitting}
+                />
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-300 mb-2">
+                    Upload Proof of Payment
+                  </label>
+                  <input
+                    type="file"
+                    accept="image/*,.pdf"
+                    ref={cashappFileInputRef}
+                    className="hidden"
+                    onChange={(e) => setCashappProofFile(e.target.files?.[0] || null)}
+                    disabled={cashappSubmitting}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => cashappFileInputRef.current?.click()}
+                    disabled={cashappSubmitting}
+                    className={`w-full border-2 border-dashed rounded-xl p-8 text-center transition-all ${
+                      cashappProofFile
+                        ? 'border-green-500/50 bg-green-900/10'
+                        : 'border-gray-600 hover:border-gray-400 hover:bg-white/5'
+                    }`}
+                  >
+                    {cashappProofFile ? (
+                      <div className="space-y-3">
+                        <Check className="mx-auto h-7 w-7 text-green-400" />
+                        <p className="text-sm text-green-300 break-all font-medium">
+                          {cashappProofFile.name}
+                        </p>
+                      </div>
+                    ) : (
+                      <div className="space-y-3">
+                        <Upload className="mx-auto h-7 w-7 text-gray-400" />
+                        <p className="text-sm text-gray-400">
+                          Click to upload screenshot or receipt
+                        </p>
+                        <p className="text-xs text-gray-500">(jpg, png, pdf)</p>
+                      </div>
+                    )}
+                  </button>
+                </div>
+
+                <Button
+                  type="submit"
+                  className="w-full"
+                  isLoading={cashappSubmitting}
+                  disabled={cashappSubmitting}
+                >
+                  Submit Proof
+                </Button>
+              </form>
             </div>
           )}
         </Card>
