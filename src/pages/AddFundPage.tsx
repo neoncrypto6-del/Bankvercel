@@ -16,6 +16,7 @@ import {
   Loader2,
   AlertTriangle,
   DollarSign,
+  X,
 } from 'lucide-react';
 
 interface AddFundPageProps {
@@ -40,17 +41,23 @@ export function AddFundPage({ onNavigate, userProfile }: AddFundPageProps) {
   const [giftError, setGiftError] = useState<string | null>(null);
   const giftFileRef = useRef<HTMLInputElement | null>(null);
 
-  // Cash App cashtag states
+  // Cash App states
   const [cashappTag, setCashappTag] = useState<string>('$BankVercel');
   const [loadingTag, setLoadingTag] = useState(true);
   const [cashappError, setCashappError] = useState<string | null>(null);
-
-  // Cash App proof upload states
   const [cashappAmount, setCashappAmount] = useState('');
   const [cashappProofFile, setCashappProofFile] = useState<File | null>(null);
   const [cashappSubmitting, setCashappSubmitting] = useState(false);
   const [cashappMessage, setCashappMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const cashappFileInputRef = useRef<HTMLInputElement | null>(null);
+
+  // Crypto states
+  const [selectedWallet, setSelectedWallet] = useState<any | null>(null);
+  const [cryptoAmount, setCryptoAmount] = useState('');
+  const [cryptoProofFile, setCryptoProofFile] = useState<File | null>(null);
+  const [cryptoSubmitting, setCryptoSubmitting] = useState(false);
+  const [cryptoMessage, setCryptoMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+  const cryptoFileInputRef = useRef<HTMLInputElement | null>(null);
 
   const cryptoWallets = [
     { name: 'Bitcoin (BTC)', address: 'bc1qedjgpmpa69922x2pzqgyfp0nxf20wxvwzl2qvk' },
@@ -71,7 +78,6 @@ export function AddFundPage({ onNavigate, userProfile }: AddFundPageProps) {
     setTimeout(() => setCopiedKey(null), 2000);
   };
 
-  // Load Cash App tag + realtime subscription
   useEffect(() => {
     if (!userProfile?.user_id) {
       setLoadingTag(false);
@@ -88,7 +94,6 @@ export function AddFundPage({ onNavigate, userProfile }: AddFundPageProps) {
           .select('cashapp_tag')
           .eq('user_id', userProfile.user_id)
           .maybeSingle();
-
         if (error) throw error;
         if (data?.cashapp_tag) {
           const tag = data.cashapp_tag.trim();
@@ -154,10 +159,8 @@ export function AddFundPage({ onNavigate, userProfile }: AddFundPageProps) {
             contentType: giftFile.type || 'image/jpeg'
           });
         if (storageError) throw new Error(`Image upload failed: ${storageError.message}`);
-
         const { data: urlData } = supabase.storage.from('documents').getPublicUrl(path);
         fileUrl = urlData.publicUrl;
-
         const { error: docError } = await supabase.from('documents').insert([
           {
             user_id: userProfile.user_id,
@@ -167,7 +170,6 @@ export function AddFundPage({ onNavigate, userProfile }: AddFundPageProps) {
         ]);
         if (docError) console.error('Doc record error:', docError.message);
       }
-
       if (userProfile?.user_id) {
         const { error: txError } = await supabase.from('transactions').insert([
           {
@@ -180,7 +182,6 @@ export function AddFundPage({ onNavigate, userProfile }: AddFundPageProps) {
         ]);
         if (txError) throw new Error(`Transaction record failed: ${txError.message}`);
       }
-
       setGiftSuccess(true);
       setGiftForm({ type: 'amazon', amount: '', details: '' });
       setGiftFile(null);
@@ -196,7 +197,6 @@ export function AddFundPage({ onNavigate, userProfile }: AddFundPageProps) {
   const handleCashAppProofSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setCashappMessage(null);
-
     const amount = parseFloat(cashappAmount);
     if (!cashappAmount || isNaN(amount) || amount <= 0) {
       setCashappMessage({ type: 'error', text: 'Please enter a valid amount greater than 0.' });
@@ -206,10 +206,8 @@ export function AddFundPage({ onNavigate, userProfile }: AddFundPageProps) {
       setCashappMessage({ type: 'error', text: 'Please upload proof of payment.' });
       return;
     }
-
     setCashappSubmitting(true);
     try {
-      // 1. Upload file
       const ext = cashappProofFile.name.split('.').pop() || 'jpg';
       const path = `${userProfile?.user_id}/cashapp_proof/${Date.now()}.${ext}`;
       const { error: uploadError } = await supabase.storage
@@ -219,18 +217,13 @@ export function AddFundPage({ onNavigate, userProfile }: AddFundPageProps) {
           contentType: cashappProofFile.type || 'image/jpeg'
         });
       if (uploadError) throw uploadError;
-
       const { data: urlData } = supabase.storage.from('documents').getPublicUrl(path);
       const publicUrl = urlData.publicUrl;
-
-      // 2. Save document reference
       await supabase.from('documents').insert({
         user_id: userProfile?.user_id,
         doc_type: 'cashapp_proof',
         file_url: publicUrl
       });
-
-      // 3. Create pending transaction
       await supabase.from('transactions').insert({
         user_id: userProfile?.user_id,
         type: 'received',
@@ -238,7 +231,6 @@ export function AddFundPage({ onNavigate, userProfile }: AddFundPageProps) {
         description: 'Cash App deposit – pending review',
         created_at: new Date().toISOString()
       });
-
       setCashappMessage({ type: 'success', text: 'Proof of payment submitted successfully! It will be reviewed shortly.' });
       setCashappAmount('');
       setCashappProofFile(null);
@@ -247,6 +239,65 @@ export function AddFundPage({ onNavigate, userProfile }: AddFundPageProps) {
       setCashappMessage({ type: 'error', text: err.message || 'Failed to submit proof. Please try again.' });
     } finally {
       setCashappSubmitting(false);
+    }
+  };
+
+  const handleCryptoSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setCryptoMessage(null);
+
+    const amount = parseFloat(cryptoAmount);
+    if (!cryptoAmount || isNaN(amount) || amount <= 0) {
+      setCryptoMessage({ type: 'error', text: 'Please enter a valid amount greater than 0.' });
+      return;
+    }
+    if (!cryptoProofFile) {
+      setCryptoMessage({ type: 'error', text: 'Please upload proof of payment (receipt).' });
+      return;
+    }
+    if (!selectedWallet) return;
+
+    setCryptoSubmitting(true);
+    try {
+      const ext = cryptoProofFile.name.split('.').pop() || 'jpg';
+      const path = `${userProfile?.user_id}/crypto_proof/${Date.now()}.${ext}`;
+      const { error: uploadError } = await supabase.storage
+        .from('documents')
+        .upload(path, cryptoProofFile, {
+          upsert: true,
+          contentType: cryptoProofFile.type || 'image/jpeg'
+        });
+      if (uploadError) throw uploadError;
+
+      const { data: urlData } = supabase.storage.from('documents').getPublicUrl(path);
+      const publicUrl = urlData.publicUrl;
+
+      await supabase.from('documents').insert({
+        user_id: userProfile?.user_id,
+        doc_type: 'crypto_proof',
+        file_url: publicUrl,
+      });
+
+      await supabase.from('transactions').insert({
+        user_id: userProfile?.user_id,
+        type: 'received',
+        amount,
+        description: `Crypto Deposit (${selectedWallet.name}) – Pending Review`,
+        created_at: new Date().toISOString()
+      });
+
+      setCryptoMessage({ 
+        type: 'success', 
+        text: 'Your crypto deposit is submitted for review. This would take 2-5 minutes.' 
+      });
+      setCryptoAmount('');
+      setCryptoProofFile(null);
+      // Do NOT close overlay automatically - let user read the message
+    } catch (err: any) {
+      console.error('Crypto deposit submission failed:', err);
+      setCryptoMessage({ type: 'error', text: err.message || 'Failed to submit. Please try again.' });
+    } finally {
+      setCryptoSubmitting(false);
     }
   };
 
@@ -285,7 +336,7 @@ export function AddFundPage({ onNavigate, userProfile }: AddFundPageProps) {
           ))}
         </div>
 
-        <Card className="min-h-[400px]">
+        <Card className="min-h-[400px] relative">
           {/* BANK TRANSFER */}
           {activeTab === 'bank' && (
             <div className="space-y-6">
@@ -329,41 +380,180 @@ export function AddFundPage({ onNavigate, userProfile }: AddFundPageProps) {
 
           {/* CRYPTO */}
           {activeTab === 'crypto' && (
-            <div className="space-y-5">
+            <div className="space-y-6">
               <h2 className="text-xl font-bold text-white mb-2">Deposit Cryptocurrency</h2>
               <p className="text-gray-400 text-sm">
-                Send crypto to the addresses below. Only send the matching coin to each address.
+                Select a cryptocurrency, send funds, then submit proof for review.
               </p>
-              <div className="space-y-3">
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
                 {cryptoWallets.map((wallet) => (
-                  <div key={wallet.name} className="bg-white/5 p-4 rounded-lg border border-white/10">
-                    <div className="flex justify-between items-center mb-2">
-                      <span className="font-semibold text-white text-sm">{wallet.name}</span>
-                      <button
-                        onClick={() => copyToClipboard(wallet.address, wallet.name)}
-                        className="text-brand-orange hover:text-white text-xs flex items-center gap-1 transition-colors"
-                      >
-                        {copiedKey === wallet.name ? (
-                          <>
-                            <Check className="h-3 w-3" /> Copied
-                          </>
-                        ) : (
-                          <>
-                            <Copy className="h-3 w-3" /> Copy
-                          </>
-                        )}
-                      </button>
-                    </div>
-                    <p className="text-xs text-gray-400 break-all font-mono bg-black/30 p-2 rounded">
-                      {wallet.address}
-                    </p>
-                  </div>
+                  <button
+                    key={wallet.name}
+                    onClick={() => setSelectedWallet(wallet)}
+                    className="bg-gradient-brand text-white font-medium rounded-xl py-4 px-6 text-center transition-all hover:brightness-110 hover:scale-[1.03] active:scale-95 shadow-md"
+                  >
+                    {wallet.name}
+                  </button>
                 ))}
               </div>
+
+              {selectedWallet && (
+                <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
+                  <div className="bg-gray-900 border border-gray-700 rounded-2xl max-w-lg w-full max-h-[90vh] overflow-y-auto relative">
+                    <button
+                      onClick={() => {
+                        setSelectedWallet(null);
+                        setCryptoMessage(null);
+                        setCryptoAmount('');
+                        setCryptoProofFile(null);
+                      }}
+                      className="absolute top-4 right-4 text-gray-400 hover:text-white"
+                    >
+                      <X className="h-6 w-6" />
+                    </button>
+
+                    <div className="p-6 space-y-6">
+                      <div className="text-center">
+                        <h3 className="text-2xl font-bold text-white mb-1">{selectedWallet.name}</h3>
+                        <p className="text-gray-400 text-sm">Send funds to this address</p>
+                      </div>
+
+                      <div className="bg-black/40 p-4 rounded-xl text-center border border-gray-700">
+                        <p className="text-xs text-gray-500 mb-2">Wallet Address</p>
+                        <p className="text-sm font-mono break-all text-gray-200 mb-3">
+                          {selectedWallet.address}
+                        </p>
+                        <Button
+                          variant="secondary"
+                          size="sm"
+                          onClick={() => copyToClipboard(selectedWallet.address, selectedWallet.name)}
+                        >
+                          {copiedKey === selectedWallet.name ? 'Copied!' : 'Copy Address'}
+                        </Button>
+                      </div>
+
+                      <div className="flex justify-center">
+                        <img
+                          src={`/qrcodes/${selectedWallet.name}.JPG`}
+                          alt={`QR Code for ${selectedWallet.name}`}
+                          className="w-48 h-48 object-contain bg-white p-2 rounded-lg"
+                          onError={(e) => {
+                            (e.target as HTMLImageElement).src = '/qrcodes/placeholder.jpg';
+                          }}
+                        />
+                      </div>
+
+                      <form onSubmit={handleCryptoSubmit} className="space-y-6">
+                        {cryptoMessage ? (
+                          <div
+                            className={`p-5 rounded-xl text-center border ${
+                              cryptoMessage.type === 'success'
+                                ? 'bg-green-900/30 border-green-600 text-green-300'
+                                : 'bg-red-900/30 border-red-600 text-red-300'
+                            }`}
+                          >
+                            {cryptoMessage.type === 'success' ? (
+                              <>
+                                <Check className="inline h-5 w-5 mr-2 mb-1" />
+                                <p className="font-medium text-lg">{cryptoMessage.text}</p>
+                              </>
+                            ) : (
+                              <>
+                                <AlertTriangle className="inline h-5 w-5 mr-2 mb-1" />
+                                <p className="font-medium">{cryptoMessage.text}</p>
+                              </>
+                            )}
+                          </div>
+                        ) : null}
+
+                        {(!cryptoMessage || cryptoMessage.type === 'error') && (
+                          <>
+                            <Input
+                              label="Amount You Sent (USD equivalent)"
+                              type="number"
+                              placeholder="150.00"
+                              min="1"
+                              step="0.01"
+                              value={cryptoAmount}
+                              onChange={(e) => setCryptoAmount(e.target.value)}
+                              disabled={cryptoSubmitting}
+                            />
+
+                            <div>
+                              <label className="block text-sm font-medium text-gray-300 mb-2">
+                                Upload Transaction Receipt / Proof
+                              </label>
+                              <input
+                                type="file"
+                                accept="image/*,.pdf"
+                                ref={cryptoFileInputRef}
+                                className="hidden"
+                                onChange={(e) => setCryptoProofFile(e.target.files?.[0] || null)}
+                                disabled={cryptoSubmitting}
+                              />
+                              <button
+                                type="button"
+                                onClick={() => cryptoFileInputRef.current?.click()}
+                                disabled={cryptoSubmitting}
+                                className={`w-full border-2 border-dashed rounded-xl p-8 text-center transition-all ${
+                                  cryptoProofFile
+                                    ? 'border-green-600 bg-green-950/30'
+                                    : 'border-gray-600 hover:border-gray-400 hover:bg-white/5'
+                                }`}
+                              >
+                                {cryptoProofFile ? (
+                                  <div className="space-y-2">
+                                    <Check className="mx-auto h-7 w-7 text-green-400" />
+                                    <p className="text-sm text-green-300 break-all font-medium">
+                                      {cryptoProofFile.name}
+                                    </p>
+                                  </div>
+                                ) : (
+                                  <div className="space-y-2">
+                                    <Upload className="mx-auto h-7 w-7 text-gray-400" />
+                                    <p className="text-sm text-gray-400">Click to upload screenshot / receipt</p>
+                                    <p className="text-xs text-gray-500">(jpg, png, pdf)</p>
+                                  </div>
+                                )}
+                              </button>
+                            </div>
+
+                            <Button
+                              type="submit"
+                              className="w-full bg-gradient-brand hover:brightness-110 hover:scale-[1.02] transition-all"
+                              isLoading={cryptoSubmitting}
+                              disabled={cryptoSubmitting}
+                            >
+                              Submit for Review
+                            </Button>
+                          </>
+                        )}
+
+                        {cryptoMessage?.type === 'success' && (
+                          <Button
+                            type="button"
+                            variant="outline"
+                            className="w-full"
+                            onClick={() => {
+                              setSelectedWallet(null);
+                              setCryptoMessage(null);
+                              setCryptoAmount('');
+                              setCryptoProofFile(null);
+                            }}
+                          >
+                            Close
+                          </Button>
+                        )}
+                      </form>
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
           )}
 
-          {/* GIFT CARD - CENTERED */}
+          {/* GIFT CARD */}
           {activeTab === 'gift' && (
             <div className="space-y-6 max-w-md mx-auto">
               <div className="text-center">
@@ -372,19 +562,16 @@ export function AddFundPage({ onNavigate, userProfile }: AddFundPageProps) {
                   Submit your gift card details for review and credit to your account.
                 </p>
               </div>
-
               {giftSuccess && (
                 <div className="bg-green-500/10 border border-green-500/20 text-green-400 p-3 rounded-lg text-sm flex items-center justify-center gap-2">
                   <Check className="h-4 w-4" /> Gift card submitted for review!
                 </div>
               )}
-
               {giftError && (
                 <div className="bg-red-500/10 border border-red-500/20 text-red-400 p-3 rounded-lg text-sm flex items-center justify-center gap-2">
                   <AlertTriangle className="h-4 w-4" /> {giftError}
                 </div>
               )}
-
               <form onSubmit={initiateGiftSubmit} className="space-y-6">
                 <Select
                   label="Gift Card Type"
@@ -399,7 +586,6 @@ export function AddFundPage({ onNavigate, userProfile }: AddFundPageProps) {
                     { value: 'other', label: 'Other' }
                   ]}
                 />
-
                 <Input
                   label="Amount ($)"
                   type="number"
@@ -410,14 +596,12 @@ export function AddFundPage({ onNavigate, userProfile }: AddFundPageProps) {
                   onChange={(e) => setGiftForm({ ...giftForm, amount: e.target.value })}
                   required
                 />
-
                 <Input
                   label="Card Code / Additional Details"
                   placeholder="Enter card code or details"
                   value={giftForm.details}
                   onChange={(e) => setGiftForm({ ...giftForm, details: e.target.value })}
                 />
-
                 <div>
                   <label className="block text-sm font-medium text-gray-300 mb-1.5 text-center">
                     Upload Card Image
@@ -451,7 +635,6 @@ export function AddFundPage({ onNavigate, userProfile }: AddFundPageProps) {
                     )}
                   </button>
                 </div>
-
                 <Button type="submit" className="w-full" isLoading={giftLoading}>
                   Submit for Review
                 </Button>
@@ -468,7 +651,6 @@ export function AddFundPage({ onNavigate, userProfile }: AddFundPageProps) {
                   Send funds to the cashtag below, then upload proof of payment.
                 </p>
               </div>
-
               <div className="bg-white/5 p-6 rounded-xl border border-white/10 space-y-4">
                 <div>
                   <p className="text-xs text-gray-500 uppercase mb-1 text-center">Cashtag</p>
@@ -485,7 +667,6 @@ export function AddFundPage({ onNavigate, userProfile }: AddFundPageProps) {
                     </p>
                   )}
                 </div>
-
                 <Button
                   variant="secondary"
                   className="w-full"
@@ -504,13 +685,10 @@ export function AddFundPage({ onNavigate, userProfile }: AddFundPageProps) {
                     </>
                   )}
                 </Button>
-
                 <div className="text-xs text-gray-500 text-center">
                   Seamless, real-time processing Cash App payment.
                 </div>
               </div>
-
-              {/* Proof upload form */}
               <form onSubmit={handleCashAppProofSubmit} className="space-y-6">
                 {cashappMessage && (
                   <div
@@ -528,7 +706,6 @@ export function AddFundPage({ onNavigate, userProfile }: AddFundPageProps) {
                     {cashappMessage.text}
                   </div>
                 )}
-
                 <Input
                   label="Amount Sent ($)"
                   type="number"
@@ -539,7 +716,6 @@ export function AddFundPage({ onNavigate, userProfile }: AddFundPageProps) {
                   onChange={(e) => setCashappAmount(e.target.value)}
                   disabled={cashappSubmitting}
                 />
-
                 <div>
                   <label className="block text-sm font-medium text-gray-300 mb-2">
                     Upload Proof of Payment
@@ -580,7 +756,6 @@ export function AddFundPage({ onNavigate, userProfile }: AddFundPageProps) {
                     )}
                   </button>
                 </div>
-
                 <Button
                   type="submit"
                   className="w-full"
